@@ -19,7 +19,7 @@ jobs:
         run: |
           go get -u golang.org/x/lint/golint
           go get -u github.com/kisielk/errcheck
-          go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
+          go get  github.com/golangci/golangci-lint/cmd/golangci-lint@v1.27.0
 
       - name: Check out code
         uses: actions/checkout@v2
@@ -29,8 +29,17 @@ jobs:
           make lint
           make test
           make build-app
+          mkdir -p install/crds/vm
+          mkdir install/crds/prom
+          mkdir install/operator
+          mkdir install/examples
+          cp deploy/crds/monitoring* install/crds/prom/
+          cp deploy/crds/victoriametrics* install/crds/vm/
+          cp deploy/operator.yaml install/operator/
+          cp deploy/rbac.yaml install/operator/
+          cp deploy/examples/* install/examples/
           zip -r operator.zip vm-operator
-          zip -r bundle_crd.zip deploy/ README.md
+          zip -r bundle_crd.zip install/ README.md
 
       - name: build docker
         uses: docker/build-push-action@v1
