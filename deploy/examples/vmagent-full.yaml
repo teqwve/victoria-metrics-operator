@@ -61,6 +61,13 @@ spec:
   relabelConfig:
     name: "vm-agent-global-relabel-config"
     key: "relabel.yaml"
+  flushInterval: 2s
+  queues: 2
+  label:
+    vmagent: "true"
+  maxDiskUsagePerURL: 30
+  sendTimeout: 30s
+  showURL: true
   remoteWrite:
     - url: "http://vmsingle-example-vmsingle.default.svc:8429/api/v1/write"
       basicAuth:
@@ -70,17 +77,10 @@ spec:
         password:
           name: rws-basic-auth
           key: password
-#      flushInterval: 2s
-#      queues: 2
       urlRelabelConfig:
         name: "vm-agent-url-relabel-config"
         key: "relabel.yaml"
-#      label:
-#        primary: "yes"
     - url: "http://vmsingle-example-vmsingle.alternative.svc:8429/api/v1/write"
-#      maxDiskUsagePerURL: 33
-#      sendTimeout: 30s
-#      showURL: true
       bearerTokenSecret:
         name: rws-bearer-token
         key: token

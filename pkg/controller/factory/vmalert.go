@@ -204,41 +204,8 @@ func vmAlertSpecGen(cr *victoriametricsv1beta1.VMAlert, c *conf.BaseOperatorConf
 			args = append(args, fmt.Sprintf("-datasource.basicAuth.password=%s", s.password))
 		}
 	}
-	if cr.Spec.RemoteWrite != nil {
-		//this param cannot be used until v1.35.5 vm release with flag breaking changes
-		args = append(args, fmt.Sprintf("-remoteWrite.url=%s", cr.Spec.RemoteWrite.URL))
-		if cr.Spec.RemoteWrite.BasicAuth != nil {
-			if s, ok := remoteSecrets["remoteWrite"]; ok {
-				args = append(args, fmt.Sprintf("-remoteWrite.basicAuth.username=%s", s.username))
-				args = append(args, fmt.Sprintf("-remoteWrite.basicAuth.password=%s", s.password))
-			}
-		}
-		if cr.Spec.RemoteWrite.Concurrency != nil {
-			args = append(args, fmt.Sprintf("-remoteWrite.concurrency=%d", *cr.Spec.RemoteWrite.Concurrency))
-		}
-		if cr.Spec.RemoteWrite.FlushInterval != nil {
-			args = append(args, fmt.Sprintf("-remoteWrite.flushInterval=%s", *cr.Spec.RemoteWrite.FlushInterval))
-		}
-		if cr.Spec.RemoteWrite.MaxBatchSize != nil {
-			args = append(args, fmt.Sprintf("-remoteWrite.maxBatchSize=%d", *cr.Spec.RemoteWrite.MaxBatchSize))
-		}
-		if cr.Spec.RemoteWrite.MaxQueueSize != nil {
-			args = append(args, fmt.Sprintf("-remoteWrite.maxQueueSize=%d", *cr.Spec.RemoteWrite.MaxQueueSize))
-		}
-	}
-	if cr.Spec.RemoteRead != nil {
-		//this param cannot be used until v1.35.5 vm release with flag breaking changes
-		args = append(args, fmt.Sprintf("-remoteRead.url=%s", cr.Spec.RemoteRead.URL))
-		if cr.Spec.RemoteRead.BasicAuth != nil {
-			if s, ok := remoteSecrets["remoteRead"]; ok {
-				args = append(args, fmt.Sprintf("-remoteRead.basicAuth.username=%s", s.username))
-				args = append(args, fmt.Sprintf("-remoteRead.basicAuth.password=%s", s.password))
-			}
-		}
-		if cr.Spec.RemoteRead.Lookback != nil {
-			args = append(args, fmt.Sprintf("-remoteRead.lookback=%s", *cr.Spec.RemoteRead.Lookback))
-		}
-	}
+	args = append(args, buildRemotes(&cr.Spec, remoteSecrets)...)
+
 	if cr.Spec.EvaluationInterval != "" {
 		args = append(args, fmt.Sprintf("-evaluationInterval=%s", cr.Spec.EvaluationInterval))
 	}
@@ -462,4 +429,44 @@ func loadVMAlertRemoteSecrets(
 		secrets["remoteRead"] = credentials
 	}
 	return secrets, nil
+}
+
+func buildRemotes(spec *victoriametricsv1beta1.VMAlertSpec, remoteSecrets map[string]BasicAuthCredentials) []string {
+	var args []string
+	if spec.RemoteWrite != nil {
+		//this param cannot be used until v1.35.5 vm release with flag breaking changes
+		args = append(args, fmt.Sprintf("-remoteWrite.url=%s", spec.RemoteWrite.URL))
+		if spec.RemoteWrite.BasicAuth != nil {
+			if s, ok := remoteSecrets["remoteWrite"]; ok {
+				args = append(args, fmt.Sprintf("-remoteWrite.basicAuth.username=%s", s.username))
+				args = append(args, fmt.Sprintf("-remoteWrite.basicAuth.password=%s", s.password))
+			}
+		}
+		if spec.RemoteWrite.Concurrency != nil {
+			args = append(args, fmt.Sprintf("-remoteWrite.concurrency=%d", *spec.RemoteWrite.Concurrency))
+		}
+		if spec.RemoteWrite.FlushInterval != nil {
+			args = append(args, fmt.Sprintf("-remoteWrite.flushInterval=%s", *spec.RemoteWrite.FlushInterval))
+		}
+		if spec.RemoteWrite.MaxBatchSize != nil {
+			args = append(args, fmt.Sprintf("-remoteWrite.maxBatchSize=%d", *spec.RemoteWrite.MaxBatchSize))
+		}
+		if spec.RemoteWrite.MaxQueueSize != nil {
+			args = append(args, fmt.Sprintf("-remoteWrite.maxQueueSize=%d", *spec.RemoteWrite.MaxQueueSize))
+		}
+	}
+	if spec.RemoteRead != nil {
+		//this param cannot be used until v1.35.5 vm release with flag breaking changes
+		args = append(args, fmt.Sprintf("-remoteRead.url=%s", spec.RemoteRead.URL))
+		if spec.RemoteRead.BasicAuth != nil {
+			if s, ok := remoteSecrets["remoteRead"]; ok {
+				args = append(args, fmt.Sprintf("-remoteRead.basicAuth.username=%s", s.username))
+				args = append(args, fmt.Sprintf("-remoteRead.basicAuth.password=%s", s.password))
+			}
+		}
+		if spec.RemoteRead.Lookback != nil {
+			args = append(args, fmt.Sprintf("-remoteRead.lookback=%s", *spec.RemoteRead.Lookback))
+		}
+	}
+	return args
 }
