@@ -52,6 +52,11 @@ type StorageSpec struct {
 	VolumeClaimTemplate EmbeddedPersistentVolumeClaim `json:"volumeClaimTemplate,omitempty"`
 }
 
+func (ss StorageSpec) Validate() error {
+	//TODO fix
+	return nil
+}
+
 // EmbeddedPersistentVolumeClaim is an embedded version of k8s.io/api/core/v1.PersistentVolumeClaim.
 // It contains TypeMeta and a reduced ObjectMeta.
 type EmbeddedPersistentVolumeClaim struct {

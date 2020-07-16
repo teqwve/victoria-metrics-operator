@@ -2,48 +2,76 @@ package v1beta1
 
 import (
 	"fmt"
-	v12 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
+	"strings"
 )
 
 const (
-	StorageDefaultVolumeName = "vmstorage-volume"
+	ClusterStatusExpanding   = "expanding"
+	ClusterStatusOperational = "operational"
+	ClusterStatusFailed      = "failed"
+
+	StorageRollingUpdateFailed = "failed to perform rolling update on vmStorage"
+	StorageCreationFailed      = "failed to create vmStorage statefulset"
+
+	SelectRollingUpdateFailed = "failed to perform rolling update on vmSelect"
+	SelectCreationFailed      = "failed to create vmSelect statefulset"
+	InsertCreationFailed      = "failed to create vmInsert deployment"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// VmClusterSpec defines the desired state of VmCluster
+// VmClusterSpec defines the desired state of VMCluster
+// +k8s:openapi-gen=true
+// +kubebuilder:printcolumn:name="Insert Version",type="string",JSONPath=".spec.vminsert.version",description="The version of VMInsert"
+// +kubebuilder:printcolumn:name="Storage Version",type="string",JSONPath=".spec.vmstorage.version",description="The version of VMStorage"
+// +kubebuilder:printcolumn:name="Select Version",type="string",JSONPath=".spec.vmselect.version",description="The version of VMSelect"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type VmClusterSpec struct {
+	// RetentionPeriod in months
+	// +kubebuilder:validation:Pattern:="[1-9]+"
+	RetentionPeriod string `json:"retentionPeriod"`
+	// ReplicationFactor defines how many copies of data make among
+	// distinct storage nodes
 	// +optional
-	VmSelect *VmSelect `json:"vmselect,omitempty"`
+	ReplicationFactor *int32 `json:"replicationFactor,omitempty"`
+
+	// ImagePullSecrets An optional list of references to secrets in the same namespace
+	// to use for pulling images from registries
+	// see http://kubernetes.io/docs/user-guide/images#specifying-imagepullsecrets-on-a-pod
 	// +optional
-	VmInsert *VmInsert `json:"vminsert,omitempty"`
+	ImagePullSecrets []v1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 	// +optional
-	VmStorage *VmStorage `json:"vmstorage,omitempty"`
+	VMSelect *VMSelect `json:"vmselect,omitempty"`
+	// +optional
+	VMInsert *VmInsert `json:"vminsert,omitempty"`
+	// +optional
+	VMStorage *VMStorage `json:"vmstorage,omitempty"`
 }
 
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// VmCluster is the Schema for the vmclusters API
+// VMCluster represents a Victoria-Metrics database cluster
+// +operator-sdk:gen-csv:customresourcedefinitions.displayName="VMCluster App"
+// +operator-sdk:gen-csv:customresourcedefinitions.resources="Deployment,apps"
+// +operator-sdk:gen-csv:customresourcedefinitions.resources="Statefulset,apps"
+// +operator-sdk:gen-csv:customresourcedefinitions.resources="Service,v1"
+// +genclient
+// +k8s:openapi-gen=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=vmclusters,scope=Namespaced
-type VmCluster struct {
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+type VMCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              VmClusterSpec   `json:"spec,omitempty"`
-	Status            VmClusterStatus `json:"status,omitempty"`
+	Spec              VmClusterSpec   `json:"spec"`
+	Status            VMClusterStatus `json:"status,omitempty"`
 }
 
-func (c *VmCluster) AsOwner() []metav1.OwnerReference {
+func (c *VMCluster) AsOwner() []metav1.OwnerReference {
 	return []metav1.OwnerReference{
 		{
 			APIVersion:         c.APIVersion,
 			Kind:               c.Kind,
-			Name:               c.Name(),
+			Name:               c.Name,
 			UID:                c.UID,
 			Controller:         pointer.BoolPtr(true),
 			BlockOwnerDeletion: pointer.BoolPtr(true),
@@ -52,129 +80,163 @@ func (c *VmCluster) AsOwner() []metav1.OwnerReference {
 }
 
 // Validate validate cluster specification
-func (c VmCluster) Validate() error {
-	if err := c.Spec.VmStorage.Validate(); err != nil {
+func (c VMCluster) Validate() error {
+	if err := c.Spec.VMStorage.Validate(); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c VmCluster) StorageCommonLables() map[string]string {
-	return map[string]string{
-		"app.kubernetes.io/name":      c.Name(),
-		"app.kubernetes.io/component": c.Spec.VmStorage.GetName(),
-	}
+// VMClusterStatus defines the observed state of VMCluster
+type VMClusterStatus struct {
+	UpdateFailCount int             `json:"updateFailCount"`
+	LastSync        string          `json:"lastSync,omitempty"`
+	ClusterStatus   string          `json:"clusterStatus"`
+	Reason          string          `json:"reason,omitempty"`
+	VMStorage       VMStorageStatus `json:"vmStorage"`
 }
 
-const (
-	VmStorageStatusExpanding   = "expanding"
-	VmStorageStatusOperational = "operational"
-)
-
-// VmClusterStatus defines the observed state of VmCluster
-type VmClusterStatus struct {
-	VmStorage VmStorageStatus `json:"vmStorage"`
-}
-
-type VmStorageStatus struct {
+type VMStorageStatus struct {
 	Status string `json:"status"`
 }
 
-// Name returns cluster name
-func (c VmCluster) Name() string {
-	return c.ObjectMeta.Name
-}
-
-func (c VmCluster) FullStorageName() string {
-	return fmt.Sprintf("%s-%s", c.Name(), c.Spec.VmStorage.GetName())
-}
+//func (c VMCluster) FullStorageName() string {
+//	return fmt.Sprintf("%s-%s", c.Name, c.Spec.VMStorage.GetName())
+//}
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-// VmClusterList contains a list of VmCluster
-type VmClusterList struct {
+// VMClusterList contains a list of VMCluster
+type VMClusterList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []VmCluster `json:"items"`
+	Items           []VMCluster `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&VmCluster{}, &VmClusterList{})
+	SchemeBuilder.Register(&VMCluster{}, &VMClusterList{})
 }
 
-type VmSelect struct {
+type VMSelect struct {
+	Name string `json:"name,omitempty"`
+	// PodMetadata configures Labels and Annotations which are propagated to the VMSelect pods.
+	PodMetadata *EmbeddedObjectMetadata `json:"podMetadata,omitempty"`
+	// Image - docker image settings for VMSelect
 	// +optional
-	Name  string `json:"name,omitempty"`
-	Image Image  `json:"image"`
+	Image Image `json:"image,omitempty"`
+	// Secrets is a list of Secrets in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The Secrets are mounted into /etc/vm/secrets/<secret-name>.
 	// +optional
-	PriorityClassName string `json:"priorityClassName,omitempty"`
+	Secrets []string `json:"secrets,omitempty"`
+	// ConfigMaps is a list of ConfigMaps in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The ConfigMaps are mounted into /etc/vm/configmaps/<configmap-name>.
 	// +optional
-	FullnameOverride string `json:"fullnameOverride,omitempty"`
+	ConfigMaps []string `json:"configMaps,omitempty"`
+	// LogFormat for VMSelect to be configured with.
+	//default or json
 	// +optional
-	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
+	// +kubebuilder:validation:Enum=default;json
+	LogFormat string `json:"logFormat,omitempty"`
+	// LogLevel for VMSelect to be configured with.
 	// +optional
-	Labels map[string]string `json:"labels,omitempty"`
+	// +kubebuilder:validation:Enum=INFO;WARN;ERROR;FATAL;PANIC
+	LogLevel string `json:"logLevel,omitempty"`
+	// ReplicaCount is the expected size of the VMSelect cluster. The controller will
+	// eventually make the size of the running cluster equal to the expected
+	// size.
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Pod Count"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:podCount"
+	ReplicaCount *int32 `json:"replicaCount"`
+	// Volumes allows configuration of additional volumes on the output Deployment definition.
+	// Volumes specified will be appended to other volumes that are generated as a result of
+	// StorageSpec objects.
 	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
+	Volumes []v1.Volume `json:"volumes,omitempty"`
+	// VolumeMounts allows configuration of additional VolumeMounts on the output Deployment definition.
+	// VolumeMounts specified will be appended to other VolumeMounts in the VMSelect container,
+	// that are generated as a result of StorageSpec objects.
 	// +optional
-	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
-	// +optional
-	NodeSelector v1.NodeSelector `json:"nodeSelector,omitempty"`
-	// +optional
-	Affinity v1.Affinity `json:"affinity,omitempty"`
-	// +optional
-	PodMetadata  *EmbeddedObjectMetadata `json:"podMetadata,omitempty"`
-	ReplicaCount *int32                  `json:"replicaCount"`
+	VolumeMounts []v1.VolumeMount `json:"volumeMounts,omitempty"`
+	// Resources container resource request and limits, https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Resources"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:resourceRequirements"
 	// +optional
 	Resources v1.ResourceRequirements `json:"resources,omitempty"`
+	// Affinity If specified, the pod's scheduling constraints.
 	// +optional
-	SecurityContext v1.PodSecurityContext `json:"securityContext,omitempty"`
+	Affinity *v1.Affinity `json:"affinity,omitempty"`
+	// Tolerations If specified, the pod's tolerations.
+	// +optional
+	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
+	// SecurityContext holds pod-level security attributes and common container settings.
+	// This defaults to the default PodSecurityContext.
+	// +optional
+	SecurityContext *v1.PodSecurityContext `json:"securityContext,omitempty"`
+	// ServiceAccountName is the name of the ServiceAccount to use to run the
+	// VMSelect Pods.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// Containers property allows to inject additions sidecars. It can be useful for proxies, backup, etc.
+	// +optional
+	Containers []v1.Container `json:"containers,omitempty"`
+	// InitContainers allows adding initContainers to the pod definition. Those can be used to e.g.
+	// fetch secrets for injection into the VMSelect configuration from external sources. Any
+	// errors during the execution of an initContainer will lead to a restart of the Pod. More info: https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
+	// Using initContainers for any use case other then secret fetching is entirely outside the scope
+	// of what the maintainers will support and by doing so, you accept that this behaviour may break
+	// at any time without notice.
+	// +optional
+	InitContainers []v1.Container `json:"initContainers,omitempty"`
+
+	// Priority class assigned to the Pods
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+
+	// HostNetwork controls whether the pod may use the node network namespace
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// DNSPolicy sets DNS policy for the pod
+	// +optional
+	DNSPolicy v1.DNSPolicy `json:"dnsPolicy,omitempty"`
+
+	// CacheMountPath allows to add cache persistent for VMSelect
 	// +optional
 	CacheMountPath string `json:"cacheMountPath,omitempty"`
+
+	// Storage - add persistent volume for cacheMounthPath
+	// its useful for persistent cache
 	// +optional
-	Service VmSelectService `json:"service,omitempty"`
+	Storage *StorageSpec `json:"persistentVolume,omitempty"`
+	// ExtraEnvs that will be added to VMSelect pod
 	// +optional
-	StatefulSet *VmSelectSts `json:"statefulSet,omitempty"`
+	ExtraEnvs []v1.EnvVar `json:"extraEnvs,omitempty"`
 	// +optional
-	PersistentVolume *VmSelectPV `json:"persistentVolume,omitempty"`
+	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
+
+	//Port listen port
+	// +optional
+	Port string `json:"port,omitempty"`
+
+	// SchedulerName - defines kubernetes scheduler name
+	// +optional
+	SchedulerName string `json:"schedulerName,omitempty"`
 }
 
-func (s VmSelect) GetName() string {
+func (s VMSelect) GetName(clusterName string) string {
 	if s.Name == "" {
-		return "vmselect"
+		return PrefixedName(clusterName, "vmselect")
 	}
-	return s.Name
+	return PrefixedName(s.Name, "vmselect")
+}
+func (s VMSelect) BuildPodNameWithService(baseName string, podIndex int32, namespace string, portName string) string {
+	return fmt.Sprintf("%s-%d.%s.%s.svc:%s,", baseName, podIndex, baseName, namespace, portName)
 }
 
-type VmSelectHeadlessService struct {
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-	// +optional
-	Labels map[string]string `json:"labels,omitempty"`
-	// +optional
-	Type string `json:"type,omitempty"`
-}
-
-type VmSelectService struct {
-	// +optional
-	VmSelectHeadlessService `json:",inline"`
-	// +optional
-	ClusterIP string `json:"clusterIP,omitempty"`
-	// +optional
-	ExternalIPs []string `json:"externalIPs,omitempty"`
-	// +optional
-	LoadBalancerIP string `json:"loadBalancerIP,omitempty"`
-	// +optional
-	LoadBalancerSourceRanges []string `json:"loadBalancerSourceRanges,omitempty"`
-	// +optional
-	ServicePort int `json:"servicePort,omitempty"`
-}
-
-type VmSelectSts struct {
-	// +optional
-	PodManagementPolicy string `json:"podManagementPolicy,omitempty"`
-	// +optional
-	Service VmSelectHeadlessService `json:"service,omitempty"`
+func PrefixedName(name, prefix string) string {
+	return fmt.Sprintf("%s-%s", prefix, name)
 }
 
 type VmSelectPV struct {
@@ -192,154 +254,376 @@ type VmSelectPV struct {
 
 type VmInsert struct {
 	// +optional
-	Name  string `json:"name,omitempty"`
-	Image Image  `json:"image"`
-	// +optional
-	PriorityClassName string `json:"priorityClassName,omitempty"`
-	// +optional
-	FullnameOverride string `json:"fullnameOverride,omitempty"`
-	// +optional
-	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-	// +optional
-	Tolerations v1.Toleration `json:"tolerations,omitempty"`
-	// +optional
-	NodeSelector v1.NodeSelector `json:"nodeSelector,omitempty"`
-	// +optional
-	Affinity v1.Affinity `json:"affinity,omitempty"`
-	// +optional
-	PodMetadata  *EmbeddedObjectMetadata `json:"podMetadata,omitempty"`
-	ReplicaCount *int32                  `json:"replicaCount"`
-	// +optional
-	Resources v1.ResourceList `json:"resources,omitempty"`
-	// +optional
-	SecurityContext v1.SecurityContext `json:"securityContext,omitempty"`
-	// +optional
-	Service VmInsertService `json:"service,omitempty"`
-}
+	Name string `json:"name,omitempty"`
 
-func (i VmInsert) GetName() string {
-	if i.Name == "" {
-		return "vminsert"
-	}
-	return i.Name
-}
-
-type VmInsertService struct {
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-	// +optional
-	Labels map[string]string `json:"labels,omitempty"`
-	// +optional
-	ClusterIP string `json:"clusterIP,omitempty"`
-	// +optional
-	ExternalIPs map[string]string `json:"externalIPs,omitempty"`
-	// +optional
-	LoadBalancerIP string `json:"loadBalancerIP,omitempty"`
-	// +optional
-	LoadBalancerSourceRanges map[string]string `json:"loadBalancerSourceRanges,omitempty"`
-	// +optional
-	ServicePort int `json:"servicePort,omitempty"`
-	// +optional
-	Type string `json:"type,omitempty"`
-}
-
-type VmStorage struct {
-	// +optional
-	Name  string `json:"name,omitempty"`
-	Image Image  `json:"image"`
-	// +optional
-	PriorityClassName string `json:"priorityClassName,omitempty"`
-	RetentionPeriod   int    `json:"retentionPeriod,omitempty"`
-	// +optional
-	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
-	// +optional
-	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
-	// +optional
-	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-	// +optional
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
-	// +optional
-	Affinity v1.Affinity `json:"affinity,omitempty"`
-	// +optional
-	PersistentVolume *VmStoragePV `json:"persistentVolume,omitempty"`
-	// +optional
+	// PodMetadata configures Labels and Annotations which are propagated to the VMSelect pods.
 	PodMetadata *EmbeddedObjectMetadata `json:"podMetadata,omitempty"`
+
+	// Image - docker image settings for VMInsert
 	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
+	Image Image `json:"image,omitempty"`
+	// Secrets is a list of Secrets in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The Secrets are mounted into /etc/vmalert/secrets/<secret-name>.
 	// +optional
-	Labels       map[string]string `json:"labels,omitempty"`
-	ReplicaCount *int32            `json:"replicaCount"`
+	Secrets []string `json:"secrets,omitempty"`
+	// ConfigMaps is a list of ConfigMaps in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The ConfigMaps are mounted into /etc/vmalert/configmaps/<configmap-name>.
 	// +optional
-	PodManagementPolicy v12.PodManagementPolicyType `json:"podManagementPolicy,omitempty"`
+	ConfigMaps []string `json:"configMaps,omitempty"`
+	// LogFormat for VMSelect to be configured with.
+	//default or json
+	// +optional
+	// +kubebuilder:validation:Enum=default;json
+	LogFormat string `json:"logFormat,omitempty"`
+	// LogLevel for VMSelect to be configured with.
+	// +optional
+	// +kubebuilder:validation:Enum=INFO;WARN;ERROR;FATAL;PANIC
+	LogLevel string `json:"logLevel,omitempty"`
+	// ReplicaCount is the expected size of the VMSelect cluster. The controller will
+	// eventually make the size of the running cluster equal to the expected
+	// size.
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Pod Count"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:podCount"
+	ReplicaCount *int32 `json:"replicaCount"`
+	// Volumes allows configuration of additional volumes on the output Deployment definition.
+	// Volumes specified will be appended to other volumes that are generated as a result of
+	// StorageSpec objects.
+	// +optional
+	Volumes []v1.Volume `json:"volumes,omitempty"`
+	// VolumeMounts allows configuration of additional VolumeMounts on the output Deployment definition.
+	// VolumeMounts specified will be appended to other VolumeMounts in the VMSelect container,
+	// that are generated as a result of StorageSpec objects.
+	// +optional
+	VolumeMounts []v1.VolumeMount `json:"volumeMounts,omitempty"`
+	// Resources container resource request and limits, https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Resources"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:resourceRequirements"
 	// +optional
 	Resources v1.ResourceRequirements `json:"resources,omitempty"`
+	// Affinity If specified, the pod's scheduling constraints.
 	// +optional
-	SecurityContext v1.PodSecurityContext `json:"securityContext,omitempty"`
+	Affinity *v1.Affinity `json:"affinity,omitempty"`
+	// Tolerations If specified, the pod's tolerations.
 	// +optional
-	Service VmStorageService `json:"service,omitempty"`
+	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
+	// SecurityContext holds pod-level security attributes and common container settings.
+	// This defaults to the default PodSecurityContext.
 	// +optional
-	TerminationGracePeriodSeconds int64 `json:"terminationGracePeriodSeconds,omitempty"`
+	SecurityContext *v1.PodSecurityContext `json:"securityContext,omitempty"`
+	// ServiceAccountName is the name of the ServiceAccount to use to run the
+	// VMSelect Pods.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// Containers property allows to inject additions sidecars. It can be useful for proxies, backup, etc.
+	// +optional
+	Containers []v1.Container `json:"containers,omitempty"`
+	// InitContainers allows adding initContainers to the pod definition. Those can be used to e.g.
+	// fetch secrets for injection into the VMSelect configuration from external sources. Any
+	// errors during the execution of an initContainer will lead to a restart of the Pod. More info: https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
+	// Using initContainers for any use case other then secret fetching is entirely outside the scope
+	// of what the maintainers will support and by doing so, you accept that this behaviour may break
+	// at any time without notice.
+	// +optional
+	InitContainers []v1.Container `json:"initContainers,omitempty"`
+
+	// Priority class assigned to the Pods
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+
+	// HostNetwork controls whether the pod may use the node network namespace
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// DNSPolicy sets DNS policy for the pod
+	// +optional
+	DNSPolicy v1.DNSPolicy `json:"dnsPolicy,omitempty"`
+	// +optional
+	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
+
+	//Port listen port
+	// +optional
+	Port string `json:"port,omitempty"`
+
+	// SchedulerName - defines kubernetes scheduler name
 	// +optional
 	SchedulerName string `json:"schedulerName,omitempty"`
+	// ExtraEnvs that will be added to VMSelect pod
+	// +optional
+	ExtraEnvs []v1.EnvVar `json:"extraEnvs,omitempty"`
+}
+
+func (i VmInsert) GetName(clusterName string) string {
+	if i.Name == "" {
+		return PrefixedName(clusterName, "vminsert")
+	}
+	return PrefixedName(i.Name, "vminsert")
+}
+
+type VMStorage struct {
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// PodMetadata configures Labels and Annotations which are propagated to the VMSelect pods.
+	PodMetadata *EmbeddedObjectMetadata `json:"podMetadata,omitempty"`
+
+	// Image - docker image settings for VMStorage
+	// +optional
+	Image Image `json:"image,omitempty"`
+
+	// Secrets is a list of Secrets in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The Secrets are mounted into /etc/vmalert/secrets/<secret-name>.
+	// +optional
+	Secrets []string `json:"secrets,omitempty"`
+	// ConfigMaps is a list of ConfigMaps in the same namespace as the VMSelect
+	// object, which shall be mounted into the VMSelect Pods.
+	// The ConfigMaps are mounted into /etc/vmalert/configmaps/<configmap-name>.
+	// +optional
+	ConfigMaps []string `json:"configMaps,omitempty"`
+	// LogFormat for VMSelect to be configured with.
+	//default or json
+	// +optional
+	// +kubebuilder:validation:Enum=default;json
+	LogFormat string `json:"logFormat,omitempty"`
+	// LogLevel for VMSelect to be configured with.
+	// +optional
+	// +kubebuilder:validation:Enum=INFO;WARN;ERROR;FATAL;PANIC
+	LogLevel string `json:"logLevel,omitempty"`
+	// ReplicaCount is the expected size of the VMSelect cluster. The controller will
+	// eventually make the size of the running cluster equal to the expected
+	// size.
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Pod Count"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:podCount"
+	ReplicaCount *int32 `json:"replicaCount"`
+	// Volumes allows configuration of additional volumes on the output Deployment definition.
+	// Volumes specified will be appended to other volumes that are generated as a result of
+	// StorageSpec objects.
+	// +optional
+	Volumes []v1.Volume `json:"volumes,omitempty"`
+	// VolumeMounts allows configuration of additional VolumeMounts on the output Deployment definition.
+	// VolumeMounts specified will be appended to other VolumeMounts in the VMSelect container,
+	// that are generated as a result of StorageSpec objects.
+	// +optional
+	VolumeMounts []v1.VolumeMount `json:"volumeMounts,omitempty"`
+	// Resources container resource request and limits, https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors=true
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.displayName="Resources"
+	// +operator-sdk:gen-csv:customresourcedefinitions.specDescriptors.x-descriptors="urn:alm:descriptor:com.tectonic.ui:resourceRequirements"
+	// +optional
+	Resources v1.ResourceRequirements `json:"resources,omitempty"`
+	// Affinity If specified, the pod's scheduling constraints.
+	// +optional
+	Affinity *v1.Affinity `json:"affinity,omitempty"`
+	// Tolerations If specified, the pod's tolerations.
+	// +optional
+	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
+	// SecurityContext holds pod-level security attributes and common container settings.
+	// This defaults to the default PodSecurityContext.
+	// +optional
+	SecurityContext *v1.PodSecurityContext `json:"securityContext,omitempty"`
+	// ServiceAccountName is the name of the ServiceAccount to use to run the
+	// VMSelect Pods.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// Containers property allows to inject additions sidecars. It can be useful for proxies, backup, etc.
+	// +optional
+	Containers []v1.Container `json:"containers,omitempty"`
+	// InitContainers allows adding initContainers to the pod definition. Those can be used to e.g.
+	// fetch secrets for injection into the VMSelect configuration from external sources. Any
+	// errors during the execution of an initContainer will lead to a restart of the Pod. More info: https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
+	// Using initContainers for any use case other then secret fetching is entirely outside the scope
+	// of what the maintainers will support and by doing so, you accept that this behaviour may break
+	// at any time without notice.
+	// +optional
+	InitContainers []v1.Container `json:"initContainers,omitempty"`
+
+	// Priority class assigned to the Pods
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+
+	// HostNetwork controls whether the pod may use the node network namespace
+	// +optional
+	HostNetwork bool `json:"hostNetwork,omitempty"`
+	// DNSPolicy sets DNS policy for the pod
+	// +optional
+	DNSPolicy v1.DNSPolicy `json:"dnsPolicy,omitempty"`
+
+	// StorageDataPath - path to storage data
+	// +optional
+	StorageDataPath string `json:"storageDataPath,omitempty"`
+	// Storage - add persistent volume for StorageDataPath
+	// its useful for persistent cache
+	// +optional
+	Storage *StorageSpec `json:"storage,omitempty"`
+
+	// +optional
+	TerminationGracePeriodSeconds int64 `json:"terminationGracePeriodSeconds,omitempty"`
+	// SchedulerName - defines kubernetes scheduler name
+	// +optional
+	SchedulerName string `json:"schedulerName,omitempty"`
+
+	//Port for health check connetions
+	Port string `json:"port,omitempty"`
+
+	// VMInsertPort for VMInsert connections
+	// +optional
+	VMInsertPort string `json:"vmInsertPort,omitempty"`
+
+	// VMSelectPort for VMSelect connections
+	// +optional
+	VMSelectPort string `json:"vmSelectPort,omitempty"`
+
+	// +optional
+	ExtraArgs map[string]string `json:"extraArgs,omitempty"`
+	// ExtraEnvs that will be added to VMSelect pod
+	// +optional
+	ExtraEnvs []v1.EnvVar `json:"extraEnvs,omitempty"`
 }
 
 // Validate validates vmstorage specification
-func (s VmStorage) Validate() error {
-	if err := s.PersistentVolume.Validate(); err != nil {
-		return fmt.Errorf("invalid persitance volime spec for %s:%w", s.GetName(), err)
+func (s VMStorage) Validate() error {
+	// TODO Fix it
+	if err := s.Storage.Validate(); err != nil {
+		return fmt.Errorf("invalid persitance volime spec for %s:%w", s.Name, err)
 	}
 	return nil
 }
 
-func (s VmStorage) GetName() string {
+func (s VMStorage) BuildPodNameWithService(baseName string, podIndex int32, namespace string, portName string) string {
+	return fmt.Sprintf("%s-%d.%s.%s.svc:%s,", baseName, podIndex, baseName, namespace, portName)
+}
+
+func (s VMStorage) GetName(clusterName string) string {
 	if s.Name == "" {
-		return "vmstorage"
+		return PrefixedName(clusterName, "vmstorage")
 	}
-	return s.Name
+	return PrefixedName(s.Name, "vmstorage")
 }
 
-type VmStoragePV struct {
-	// +optional
-	AccessModes []v1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-	// +optional
-	ExistingClaim string `json:"existingClaim,omitempty"`
-	// +optional
-	MountPath string `json:"mountPath,omitempty"`
-	// +optional
-	Size string `json:"size,omitempty"`
-	// +optional
-	SubPath string `json:"subPath,omitempty"`
+func (s VMStorage) GetStorageName() string {
+
+	return "vmstorage-db"
 }
 
-func (pv *VmStoragePV) Validate() error {
-	if pv == nil {
+// Validate validates vmstorage specification
+func (s VMSelect) GetCacheMountName() string {
+	return PrefixedName("cachedir", "vmselect")
+}
+
+// Image defines docker image settings
+type Image struct {
+	// Repository contains name of docker image + it's repository if needed
+	Repository string `json:"repository,omitempty"`
+	// Tag contains desired docker image version
+	Tag string `json:"tag,omitempty"`
+	// PullPolicy describes how to pull docker image
+	PullPolicy v1.PullPolicy `json:"pullPolicy,omitempty"`
+}
+
+func (cr VMCluster) VMSelectSelectorLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":      "vmselect",
+		"app.kubernetes.io/instance":  cr.Name,
+		"app.kubernetes.io/component": "monitoring",
+		"managed-by":                  "vm-operator",
+	}
+}
+
+func (cr VMCluster) VMSelectPodLabels() map[string]string {
+	labels := cr.VMSelectSelectorLabels()
+	if cr.Spec.VMSelect == nil || cr.Spec.VMSelect.PodMetadata == nil {
+		return labels
+	}
+	for label, value := range cr.Spec.VMSelect.PodMetadata.Labels {
+		labels[label] = value
+	}
+	return labels
+}
+
+func (cr VMCluster) VMInsertSelectorLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":      "vminsert",
+		"app.kubernetes.io/instance":  cr.Name,
+		"app.kubernetes.io/component": "monitoring",
+		"managed-by":                  "vm-operator",
+	}
+}
+
+func (cr VMCluster) VMInsertPodLabels() map[string]string {
+	labels := cr.VMInsertSelectorLabels()
+	if cr.Spec.VMInsert == nil || cr.Spec.VMInsert.PodMetadata == nil {
+		return labels
+	}
+	for label, value := range cr.Spec.VMInsert.PodMetadata.Labels {
+		labels[label] = value
+	}
+	return labels
+}
+func (cr VMCluster) VMStorageSelectorLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":      "vmstorage",
+		"app.kubernetes.io/instance":  cr.Name,
+		"app.kubernetes.io/component": "monitoring",
+		"managed-by":                  "vm-operator",
+	}
+}
+
+func (cr VMCluster) VMStoragePodLabels() map[string]string {
+	labels := cr.VMStorageSelectorLabels()
+	if cr.Spec.VMStorage == nil || cr.Spec.VMStorage.PodMetadata == nil {
+		return labels
+	}
+	//TODO fix it, we cannot allow to overwrite selector labels
+	for label, value := range cr.Spec.VMStorage.PodMetadata.Labels {
+		labels[label] = value
+	}
+	return labels
+}
+
+func (cr VMCluster) FinalLabels(baseLabels map[string]string) map[string]string {
+	labels := map[string]string{}
+	if cr.ObjectMeta.Labels != nil {
+		for label, value := range cr.ObjectMeta.Labels {
+			labels[label] = value
+		}
+	}
+	for label, value := range baseLabels {
+		labels[label] = value
+	}
+	return labels
+}
+
+func (cr VMCluster) VMSelectPodAnnotations() map[string]string {
+	if cr.Spec.VMSelect == nil || cr.Spec.VMSelect.PodMetadata == nil {
 		return nil
 	}
-	if _, err := resource.ParseQuantity(pv.Size); err != nil {
-		return fmt.Errorf("can not parse volume size %s:%w", pv.Size, err)
+	return cr.Spec.VMSelect.PodMetadata.Annotations
+}
+
+func (cr VMCluster) VMInsertPodAnnotations() map[string]string {
+	if cr.Spec.VMInsert == nil || cr.Spec.VMInsert.PodMetadata == nil {
+		return nil
 	}
-	return nil
+	return cr.Spec.VMSelect.PodMetadata.Annotations
 }
 
-type Image struct {
-	Repository string        `json:"repository"`
-	Tag        string        `json:"tag"`
-	PullPolicy v1.PullPolicy `json:"pullPolicy"`
+func (cr VMCluster) VMStoragePodAnnotations() map[string]string {
+	if cr.Spec.VMStorage == nil || cr.Spec.VMStorage.PodMetadata == nil {
+		return nil
+	}
+	return cr.Spec.VMSelect.PodMetadata.Annotations
 }
 
-type VmStorageService struct {
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-	// +optional
-	Labels map[string]string `json:"labels,omitempty"`
-	// +optional
-	ServicePort int32 `json:"servicePort,omitempty"`
-	// +optional
-	VminsertPort int32 `json:"vminsertPort,omitempty"`
-	// +optional
-	VmselectPort int32 `json:"vmselectPort,omitempty"`
+func (cr VMCluster) Annotations() map[string]string {
+	annotations := make(map[string]string, len(cr.ObjectMeta.Annotations))
+	for annotation, value := range cr.ObjectMeta.Annotations {
+		if !strings.HasPrefix(annotation, "kubectl.kubernetes.io/") {
+			annotations[annotation] = value
+		}
+	}
+	return annotations
 }

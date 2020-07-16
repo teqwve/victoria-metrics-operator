@@ -69,6 +69,59 @@ type BaseOperatorConf struct {
 		ConfigReloaderCPU    string `default:"100m"`
 		ConfigReloaderMemory string `default:"25Mi"`
 	}
+
+	VMClusterDefault struct {
+		VMSelectDefault struct {
+			Image    string `default:"victoriametrics/vmselect"`
+			Version  string `default:"v1.37.0-cluster"`
+			Port     string `default:"8481"`
+			Resource struct {
+				Limit struct {
+					Mem string `default:"1500Mi"`
+					Cpu string `default:"1200m"`
+				}
+				Request struct {
+					Mem string `default:"500Mi"`
+					Cpu string `default:"150m"`
+				}
+			}
+		}
+		VMStorageDefault struct {
+			Image    string `default:"victoriametrics/vmstorage"`
+			Version  string `default:"v1.37.0-cluster"`
+			VMInsertPort     string `default:"8400"`
+			VMSelectPort string `default:"8401"`
+			Port string `default:"8482"`
+			Resource struct {
+				Limit struct {
+					Mem string `default:"1500Mi"`
+					Cpu string `default:"1200m"`
+				}
+				Request struct {
+					Mem string `default:"500Mi"`
+					Cpu string `default:"150m"`
+				}
+			}
+		}
+		VMInsertDefault struct {
+			Image    string `default:"victoriametrics/vminsert"`
+			Version  string `default:"v1.37.0-cluster"`
+			Port     string `default:"8480"`
+			Resource struct {
+				Limit struct {
+					Mem string `default:"1500Mi"`
+					Cpu string `default:"1200m"`
+				}
+				Request struct {
+					Mem string `default:"500Mi"`
+					Cpu string `default:"150m"`
+				}
+			}
+		}
+
+	}
+
+
 	VMAlertManager struct {
 		ConfigReloaderImage          string `default:"jimmidyson/configmap-reload:v0.3.0"`
 		ConfigReloaderCPU            string `default:"100m"`

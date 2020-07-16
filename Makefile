@@ -74,7 +74,7 @@ doc:
 	         $(APIS_BASE_PATH)/vmrule_types.go \
 	         $(APIS_BASE_PATH)/vmservicescrape_types.go \
 	         $(APIS_BASE_PATH)/vmpodscrape_types.go \
-	         $(APIS_BASE_PATH)/vmprometheusconvertor_types.go \
+	         $(APIS_BASE_PATH)/vmcluster_types.go  \
 	           > docs/api.MD
 
 
