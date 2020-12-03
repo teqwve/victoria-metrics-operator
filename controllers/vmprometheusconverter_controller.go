@@ -251,7 +251,7 @@ func (c *ConverterController) UpdatePrometheusRule(old, new interface{}) {
 	metaMergeStrategy := getMetaMergeStrategy(existingVMRule.Annotations)
 	existingVMRule.Annotations = mergeLabelsWithStrategy(existingVMRule.Annotations, VMRule.Annotations, metaMergeStrategy)
 	existingVMRule.Labels = mergeLabelsWithStrategy(existingVMRule.Labels, VMRule.Labels, metaMergeStrategy)
-	existingVMRule.OwnerReferences = VMRule.OwnerReferences
+	existingVMRule.OwnerReferences = mergeOwnerReferences(existingVMRule.OwnerReferences, VMRule.OwnerReferences, promRuleNew.UID)
 
 	err = c.vclient.Update(ctx, existingVMRule)
 	if err != nil {
@@ -304,7 +304,7 @@ func (c *ConverterController) UpdateServiceMonitor(_, new interface{}) {
 	metaMergeStrategy := getMetaMergeStrategy(existingVMServiceScrape.Annotations)
 	existingVMServiceScrape.Annotations = mergeLabelsWithStrategy(existingVMServiceScrape.Annotations, vmServiceScrape.Annotations, metaMergeStrategy)
 	existingVMServiceScrape.Labels = mergeLabelsWithStrategy(existingVMServiceScrape.Labels, vmServiceScrape.Labels, metaMergeStrategy)
-	existingVMServiceScrape.OwnerReferences = VMServiceScrape.OwnerReferences
+	existingVMServiceScrape.OwnerReferences = mergeOwnerReferences(existingVMServiceScrape.OwnerReferences, vmServiceScrape.OwnerReferences, serviceMonNew.UID)
 
 	err = c.vclient.Update(ctx, existingVMServiceScrape)
 	if err != nil {
@@ -355,7 +355,7 @@ func (c *ConverterController) UpdatePodMonitor(_, new interface{}) {
 	mergeStrategy := getMetaMergeStrategy(existingVMPodScrape.Annotations)
 	existingVMPodScrape.Annotations = mergeLabelsWithStrategy(existingVMPodScrape.Annotations, podScrape.Annotations, mergeStrategy)
 	existingVMPodScrape.Labels = mergeLabelsWithStrategy(existingVMPodScrape.Labels, podScrape.Labels, mergeStrategy)
-	existingVMPodScrape.OwnerReferences = VMPodScrape.OwnerReferences
+	existingVMPodScrape.OwnerReferences = mergeOwnerReferences(existingVMPodScrape.OwnerReferences, podScrape.OwnerReferences, podMonitorNew.UID)
 
 	err = c.vclient.Update(ctx, existingVMPodScrape)
 	if err != nil {
@@ -390,6 +390,18 @@ func mergeLabelsWithStrategy(old, new map[string]string, mergeStrategy string) m
 		merged[k] = v
 	}
 	return merged
+}
+
+// mergeOwnerReferences merges two []OwnerReference while preserving any
+// references that might have been set by someone else
+func mergeOwnerReferences(old, new []metav1.OwnerReference, sourceUID types.UID) []metav1.OwnerReference {
+	merged := []metav1.OwnerReference{}
+	for _, ownerRef := range old {
+		if ownerRef.UID != sourceUID {
+			merged = append(merged, ownerRef)
+		}
+	}
+	return append(merged, new...)
 }
 
 // helper function - extracts meta merge strategy
@@ -446,7 +458,7 @@ func (c *ConverterController) UpdateProbe(_, new interface{}) {
 	mergeStrategy := getMetaMergeStrategy(existingVMProbe.Annotations)
 	existingVMProbe.Annotations = mergeLabelsWithStrategy(existingVMProbe.Annotations, probeNew.Annotations, mergeStrategy)
 	existingVMProbe.Labels = mergeLabelsWithStrategy(existingVMProbe.Labels, probeNew.Labels, mergeStrategy)
-	existingVMProbe.OwnerReferences = VMProbe.OwnerReferences
+	existingVMProbe.OwnerReferences = mergeOwnerReferences(existingVMProbe.OwnerReferences, vmProbe.OwnerReferences, probeNew.UID)
 
 	existingVMProbe.Spec = vmProbe.Spec
 	err = c.vclient.Update(ctx, existingVMProbe)
